@@ -15,30 +15,30 @@ class BaseGroupMembershipBackend(object):
     def authenticate(self, username=None, password=None):
         """
         Attempts to bind the provided username and password to LDAP.
-        
+
         A successful LDAP bind authenticates the user.
         """
         raise NotImplementedError
-    
+
     def bind_ldap(self, username, password):
         """
         Implements the specific logic necessary to bind a given username and
         password to the particular LDAP server.
-        
+
         Override this method for each new variety of LDAP backend.
         """
         raise NotImplementedError
-    
+
     def get_or_create_user(self, username, password):
         """
         Attempts to get the user from the Django db; failing this, creates a
         django.contrib.auth.models.User from details pulled from the specific
         LDAP backend.
-        
+
         Override this method for each new variety of LDAP backend.
         """
         raise NotImplementedError
-    
+
     def get_user(self, user_id):
         """
         Implements the logic to retrieve a specific user from the Django db.
@@ -47,7 +47,7 @@ class BaseGroupMembershipBackend(object):
             return User.objects.get(pk=user_id)
         except User.DoesNotExist:
             return None
-        
+
     def set_memberships_from_ldap(self, user, membership):
         """
         Assigns user to specific django.contrib.auth.models.Group groups based
@@ -58,16 +58,16 @@ class BaseGroupMembershipBackend(object):
         for l_grp in ldap_groups:
             for grp in l_grp.groups.all():
                 user.groups.add(grp)
-                
+
         staff_groups = ldap_groups.filter(make_staff=True).count()
         if staff_groups > 0:
             user.is_staff = True
-            
+
         superuser_groups = ldap_groups.filter(make_superuser=True).count()
         if superuser_groups > 0:
             user.is_superuser = True
         user.save()
-        
+
 
 class ActiveDirectoryGroupMembershipSSLBackend(BaseGroupMembershipBackend):
     def bind_ldap(self, username, password):
@@ -75,13 +75,13 @@ class ActiveDirectoryGroupMembershipSSLBackend(BaseGroupMembershipBackend):
             ldap.set_option(ldap.OPT_X_TLS_CACERTFILE,settings.CERT_FILE)
         except AttributeError:
             pass
-        ldap.set_option(ldap.OPT_REFERRALS,0) # DO NOT TURN THIS OFF OR SEARCH WON'T WORK!      
+        ldap.set_option(ldap.OPT_REFERRALS,0) # DO NOT TURN THIS OFF OR SEARCH WON'T WORK!
         l = ldap.initialize(settings.LDAP_URL)
         l.set_option(ldap.OPT_PROTOCOL_VERSION, 3)
         binddn = "%s@%s" % (username,settings.NT4_DOMAIN)
         l.simple_bind_s(binddn,password)
         return l
-        
+
     def authenticate(self,username=None,password=None):
         try:
             if len(password) == 0:
@@ -89,27 +89,27 @@ class ActiveDirectoryGroupMembershipSSLBackend(BaseGroupMembershipBackend):
             l = self.bind_ldap(username, password)
             l.unbind_s()
             return self.get_or_create_user(username,password)
-                    
+
         except ImportError:
             pass
         except ldap.INVALID_CREDENTIALS:
             pass
-        
+
     def get_or_create_user(self, username, password):
         try:
             user = User.objects.get(username=username)
         except User.DoesNotExist:
-        
+
             try:
                 l = self.bind_ldap(username, password)
                 # search
                 result = l.search_ext_s(settings.SEARCH_DN,ldap.SCOPE_SUBTREE,"sAMAccountName=%s" % username,settings.SEARCH_FIELDS)[0][1]
-               
+
                 if result.has_key('memberOf'):
                     membership = result['memberOf']
                 else:
                     membership = None
-                
+
                 # get email
                 if result.has_key('mail'):
                     mail = result['mail'][0]
@@ -120,29 +120,29 @@ class ActiveDirectoryGroupMembershipSSLBackend(BaseGroupMembershipBackend):
                     last_name = result['sn'][0]
                 else:
                     last_name = None
-                
+
                 # get display name
                 if result.has_key('givenName'):
                     first_name = result['givenName'][0]
                 else:
                     first_name = None
-                
+
                 l.unbind_s()
-                
+
                 user = User(username=username,first_name=first_name,last_name=last_name,email=mail)
-            
+
             except Exception, e:
                 return None
-        
+
             user.is_staff = False
             user.is_superuser = False
-            user.set_password('ldap authenticated')
+            user.set_unusable_password()
             user.save()
-            
+
             self.set_memberships_from_ldap(user, membership)
-        
+
         return user
-    
+
 class eDirectoryGroupMembershipSSLBackend(BaseGroupMembershipBackend):
     def bind_ldap(self, username, password):
         try:
@@ -153,7 +153,7 @@ class eDirectoryGroupMembershipSSLBackend(BaseGroupMembershipBackend):
         l.set_option(ldap.OPT_PROTOCOL_VERSION, 3)
         l.simple_bind_s(username, password)
         return l
-        
+
     def authenticate(self,username=None,password=None):
         try:
             if len(password) == 0:
@@ -162,13 +162,13 @@ class eDirectoryGroupMembershipSSLBackend(BaseGroupMembershipBackend):
             base = settings.SEARCH_DN
             scope = ldap.SCOPE_SUBTREE
             retrieve_attributes = ['cn']
-            
+
             filtered_name = ldap.filter.escape_filter_chars(username)
             filter = 'cn=%s' % filtered_name
-            
+
             results = l.search_s(base, scope, filter, retrieve_attributes)
             candidate_dns = [result[0] for result in results]
-            
+
             l.unbind()
             for dn in candidate_dns:
                 try:
@@ -180,12 +180,12 @@ class eDirectoryGroupMembershipSSLBackend(BaseGroupMembershipBackend):
                     continue
                 l.unbind()
                 return self.get_or_create_user(dn, password)
-                    
+
         except ImportError:
             pass
         except ldap.INVALID_CREDENTIALS:
             pass
-        
+
     def get_or_create_user(self, username, password):
         stripped_name = ''
         if username.lower().startswith('cn='):
@@ -206,7 +206,7 @@ class eDirectoryGroupMembershipSSLBackend(BaseGroupMembershipBackend):
                     membership = result['groupMembership']
                 else:
                     membership = None
-                
+
                 # get email
                 if result.has_key('mail'):
                     mail = result['mail'][0]
@@ -217,24 +217,24 @@ class eDirectoryGroupMembershipSSLBackend(BaseGroupMembershipBackend):
                     last_name = result['sn'][0]
                 else:
                     last_name = None
-                
+
                 # get display name
                 if result.has_key('givenName'):
                     first_name = result['givenName'][0]
                 else:
                     first_name = None
-                
-                
+
+
                 user = User(username=stripped_name,first_name=first_name,last_name=last_name,email=mail)
             except Exception, e:
                 return None
-        
+
             user.is_staff = False
             user.is_superuser = False
-            user.set_password('ldap authenticated')
+            user.set_unusable_password()
             user.save()
-            
+
             self.set_memberships_from_ldap(user, membership)
-        
+
         return user
-    
+
