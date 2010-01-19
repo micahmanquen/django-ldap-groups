@@ -14,11 +14,11 @@ class LDAPGroup(models.Model):
     """
     make_staff = models.BooleanField(default=False)
     make_superuser = models.BooleanField(default=False)
-    org_unit = models.TextField(unique=True)
+    org_unit = models.TextField()
     groups = models.ManyToManyField(Group, related_name='ldap_org_units')
-    
+
     def __unicode__(self):
         return u'LDAP Groups for OU %s' % self.org_unit
-    
+
     class Meta:
         ordering = ['org_unit']
